@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Billing — Street 160</title>
+  <link rel="stylesheet" href="../css/style.css"/>
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main class="main-content">
+  <div class="page-header no-print">
+    <div>
+      <h2 class="page-title">Billing</h2>
+      <p class="page-sub">Generate bills for completed orders.</p>
+    </div>
+  </div>
+
+  <div id="alert" class="alert no-print"></div>
+
+  <div style="display:grid;grid-template-columns:1fr 400px;gap:20px">
+
+    <!-- Left: Order select + discount -->
+    <div class="no-print">
+      <div class="card">
+        <div id="loading-orders" class="loading"><div class="spinner"></div>Loading orders…</div>
+        <div id="order-form" style="display:none">
+          <div class="form-group">
+            <label class="form-label">Select Completed Order</label>
+            <select id="order-select" class="form-select" onchange="loadOrder()">
+              <option value="">— Choose an order —</option>
+            </select>
+          </div>
+          <div class="form-group" id="discount-group" style="display:none">
+            <label class="form-label">Discount (%)</label>
+            <input type="number" id="discount" class="form-input" value="0" min="0" max="100"
+              style="max-width:200px" onchange="renderBill()"/>
+          </div>
+          <div style="display:flex;gap:10px;margin-top:8px" id="bill-actions" style="display:none">
+            <button class="btn btn-primary" onclick="markPaid()">Mark as Paid ✓</button>
+            <button class="btn btn-ghost" onclick="window.print()">🖨 Print Bill</button>
+            <button class="btn btn-ghost" onclick="saveBill()">💾 Save Bill</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bills history -->
+      <div class="card" style="margin-top:20px">
+        <div style="font-size:14px;font-weight:600;margin-bottom:16px">Bill History</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Bill #</th><th>Order #</th><th>Total</th><th>Status</th><th>Date</th>
+            </tr></thead>
+            <tbody id="bills-tbody">
+              <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">No bills yet</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Receipt preview -->
+    <div>
+      <div id="receipt-empty" class="card" style="text-align:center;padding:60px 20px;color:var(--muted)">
+        Select a completed order to generate a bill
+      </div>
+      <div id="receipt" style="display:none">
+        <div class="receipt" id="printable-receipt">
+          <div class="receipt-logo">
+            <h2>Street 160</h2>
+            <p style="color:var(--muted);font-size:12px">Family Restaurant</p>
+            <p style="color:var(--muted);font-size:11px" id="r-date"></p>
+          </div>
+
+          <div style="margin-bottom:12px">
+            <div class="receipt-row"><span style="color:var(--muted)">Order #</span><span id="r-id" style="font-weight:600"></span></div>
+            <div class="receipt-row"><span style="color:var(--muted)">Type</span><span id="r-type"></span></div>
+            <div class="receipt-row"><span style="color:var(--muted)">Staff</span><span id="r-staff"></span></div>
+          </div>
+
+          <hr class="receipt-divider"/>
+          <div id="r-items"></div>
+          <hr class="receipt-divider"/>
+
+          <div class="receipt-row"><span style="color:var(--muted)">Subtotal</span><span id="r-subtotal"></span></div>
+          <div class="receipt-row" id="r-disc-row" style="display:none">
+            <span style="color:var(--success)">Discount</span>
+            <span style="color:var(--success)" id="r-disc"></span>
+          </div>
+          <hr class="receipt-divider"/>
+          <div class="receipt-row receipt-total">
+            <span>TOTAL</span><span id="r-total"></span>
+          </div>
+
+          <div id="r-paid" style="display:none;margin-top:16px;text-align:center;padding:10px;background:rgba(76,175,125,0.15);border-radius:8px;color:var(--success);font-weight:700;font-size:14px">
+            ✓ PAID
+          </div>
+          <p style="text-align:center;margin-top:16px;font-size:11px;color:var(--muted)">Thank you for dining with us!</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="../js/api.js"></script>
+<script src="../js/sidebar.js"></script>
+<script>
+  requireAuth();
+  renderSidebar('billing');
+
+  let completedOrders = [];
+  let selectedOrder   = null;
+  let isPaid = false;
+
+  async function loadAll() {
+    try {
+      const [ordRes, billRes] = await Promise.all([api.getOrders(), api.getBills()]);
+      completedOrders = (ordRes.data || ordRes).filter(o => o.status === 'completed');
+      const bills = billRes.data || billRes;
+
+      // Populate order select
+      const sel = document.getElementById('order-select');
+      sel.innerHTML = '<option value="">— Choose an order —</option>' +
+        completedOrders.map(o =>
+          `<option value="${o.id}">#${o.id} — ${o.type==='dine_in'?'Table '+o.table_number:'Takeaway'} — Rs. ${parseFloat(o.total).toLocaleString()}</option>`
+        ).join('');
+
+      // Auto-select if ?order_id param
+      const params = new URLSearchParams(window.location.search);
+      const oid = params.get('order_id');
+      if (oid) { sel.value = oid; loadOrder(); }
+
+      // Bills history
+      renderBillsHistory(bills);
+
+      document.getElementById('loading-orders').style.display = 'none';
+      document.getElementById('order-form').style.display = 'block';
+    } catch(e) {
+      document.getElementById('loading-orders').innerHTML = `<p style="color:var(--danger)">${e.message}</p>`;
+    }
+  }
+
+  function loadOrder() {
+    const id = document.getElementById('order-select').value;
+    isPaid = false;
+    document.getElementById('r-paid').style.display = 'none';
+    if (!id) {
+      document.getElementById('receipt').style.display = 'none';
+      document.getElementById('receipt-empty').style.display = 'block';
+      document.getElementById('discount-group').style.display = 'none';
+      document.getElementById('bill-actions').style.display = 'none';
+      return;
+    }
+    selectedOrder = completedOrders.find(o => o.id == id);
+    document.getElementById('discount').value = 0;
+    document.getElementById('discount-group').style.display = 'block';
+    document.getElementById('bill-actions').style.display = 'flex';
+    document.getElementById('receipt-empty').style.display = 'none';
+    document.getElementById('receipt').style.display = 'block';
+    renderBill();
+  }
+
+  function renderBill() {
+    if (!selectedOrder) return;
+    const o = selectedOrder;
+    const disc  = parseFloat(document.getElementById('discount').value) || 0;
+    const items = o.order_items || o.items || [];
+    const subtotal = items.reduce((s,i) => s + parseFloat(i.unit_price||i.price) * (i.quantity||i.qty), 0);
+    const discAmt  = (subtotal * disc) / 100;
+    const total    = subtotal - discAmt;
+
+    document.getElementById('r-id').textContent    = '#' + o.id;
+    document.getElementById('r-type').textContent  = o.type === 'dine_in' ? 'Dine In — Table ' + o.table_number : 'Takeaway';
+    document.getElementById('r-staff').textContent = o.user?.name || 'Staff';
+    document.getElementById('r-date').textContent  = new Date().toLocaleString();
+    document.getElementById('r-subtotal').textContent = 'Rs. ' + subtotal.toLocaleString();
+    document.getElementById('r-total').textContent = 'Rs. ' + total.toFixed(2);
+
+    if (disc > 0) {
+      document.getElementById('r-disc-row').style.display = 'flex';
+      document.getElementById('r-disc').textContent = '− Rs. ' + discAmt.toFixed(2) + ' (' + disc + '%)';
+    } else {
+      document.getElementById('r-disc-row').style.display = 'none';
+    }
+
+    document.getElementById('r-items').innerHTML = items.map(i => `
+      <div class="receipt-row" style="margin-bottom:8px">
+        <span>${i.menu_item?.name || 'Item'} × ${i.quantity||i.qty}</span>
+        <span>Rs. ${(parseFloat(i.unit_price||i.price) * (i.quantity||i.qty)).toLocaleString()}</span>
+      </div>
+    `).join('');
+  }
+
+  async function markPaid() {
+    isPaid = true;
+    document.getElementById('r-paid').style.display = 'block';
+    showAlert('alert', 'Order marked as paid!', 'success');
+    await saveBill();
+  }
+
+  async function saveBill() {
+    if (!selectedOrder) return;
+    const disc = parseFloat(document.getElementById('discount').value) || 0;
+    const items = selectedOrder.order_items || selectedOrder.items || [];
+    const subtotal = items.reduce((s,i) => s + parseFloat(i.unit_price||i.price) * (i.quantity||i.qty), 0);
+    const discAmt  = (subtotal * disc) / 100;
+    const total    = subtotal - discAmt;
+    try {
+      await api.createBill({
+        order_id: selectedOrder.id,
+        subtotal, discount: discAmt, tax: 0, total,
+        payment_status: isPaid ? 'paid' : 'unpaid',
+      });
+      loadAll();
+    } catch(e) { /* bill may already exist */ }
+  }
+
+  function renderBillsHistory(bills) {
+    const tbody = document.getElementById('bills-tbody');
+    if (!bills.length) return;
+    tbody.innerHTML = bills.map(b => `
+      <tr>
+        <td style="color:var(--gold);font-weight:600">#${b.id}</td>
+        <td>#${b.order_id}</td>
+        <td style="font-weight:600">Rs. ${parseFloat(b.total).toLocaleString()}</td>
+        <td>${statusBadge(b.payment_status)}</td>
+        <td style="color:var(--muted);font-size:12px">${(b.created_at||'').slice(0,10)}</td>
+      </tr>
+    `).join('');
+  }
+
+  loadAll();
+</script>
+</body>
+</html>

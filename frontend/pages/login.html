@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Login — Street 160</title>
+  <link rel="stylesheet" href="../css/style.css"/>
+</head>
+<body>
+<div class="login-page">
+  <div class="login-box">
+    <div class="login-logo">
+      <h1>Street 160</h1>
+      <p>Family Restaurant — Staff Portal</p>
+    </div>
+
+    <div id="alert" class="alert"></div>
+
+    <!-- STEP 1: LOGIN -->
+    <div id="login-step">
+      <div class="form-group">
+        <label class="form-label">Username</label>
+        <input type="text" id="username" class="form-input" placeholder="Enter your username" value=""/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Password</label>
+        <input type="password" id="password" class="form-input" placeholder="••••••••" value=""/>
+      </div>
+      <button id="login-btn" class="btn btn-primary" style="width:100%;padding:12px;font-size:14px;margin-top:8px;" onclick="doLogin()">
+        Sign In →
+      </button>
+      <p style="text-align:center;color:var(--muted);font-size:12px;margin-top:16px;">
+        Use your provided staff credentials to sign in.
+      </p>
+    </div>
+
+    <!-- STEP 2: OTP -->
+    <div id="otp-step" style="display:none;">
+      <p style="text-align:center;color:var(--text);font-size:14px;margin-bottom:20px;">
+        An OTP has been sent to your email address.<br>Please enter it below.
+      </p>
+      <div class="form-group">
+        <label class="form-label">6-Digit OTP</label>
+        <input type="text" id="otp" class="form-input" placeholder="000000" style="text-align:center;font-size:24px;letter-spacing:4px;font-weight:bold;"/>
+      </div>
+      <button id="verify-btn" class="btn btn-primary" style="width:100%;padding:12px;font-size:14px;margin-top:8px;" onclick="doVerify()">
+        Verify OTP
+      </button>
+      <button class="btn btn-ghost" style="width:100%;padding:12px;font-size:14px;margin-top:8px;" onclick="window.location.reload()">
+        Cancel
+      </button>
+    </div>
+  </div>
+</div>
+
+<script src="../js/api.js"></script>
+<script>
+  // Redirect if already logged in
+  if (getToken()) window.location.href = 'dashboard.html';
+
+  let currentUsername = '';
+
+  async function doLogin() {
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+    const btn      = document.getElementById('login-btn');
+
+    if (!username) {
+      showAlert('alert', 'Please enter your username.', 'danger');
+      return;
+    }
+
+    btn.textContent = 'Signing in…';
+    btn.disabled = true;
+
+    try {
+      const data = await api.login(username, password);
+      
+      if (data.require_otp) {
+        currentUsername = data.username;
+        document.getElementById('login-step').style.display = 'none';
+        document.getElementById('otp-step').style.display = 'block';
+        showAlert('alert', 'OTP sent to your email.', 'info');
+      } else {
+        // Fallback if OTP is disabled for some reason
+        localStorage.setItem('auth_token', data.token);
+        localStorage.setItem('auth_user', JSON.stringify(data.user));
+        window.location.href = 'dashboard.html';
+      }
+    } catch (err) {
+      showAlert('alert', err.message || 'Invalid credentials.', 'danger');
+      btn.textContent = 'Sign In →';
+      btn.disabled = false;
+    }
+  }
+
+  async function doVerify() {
+    const otp = document.getElementById('otp').value.trim();
+    const btn = document.getElementById('verify-btn');
+
+    if (!otp || otp.length !== 6) {
+      showAlert('alert', 'Please enter a valid 6-digit OTP.', 'danger');
+      return;
+    }
+
+    btn.textContent = 'Verifying…';
+    btn.disabled = true;
+
+    try {
+      const data = await api.verifyOtp(currentUsername, otp);
+      localStorage.setItem('auth_token', data.token);
+      localStorage.setItem('auth_user', JSON.stringify(data.user));
+      window.location.href = 'dashboard.html';
+    } catch (err) {
+      showAlert('alert', err.message || 'Invalid OTP.', 'danger');
+      btn.textContent = 'Verify OTP';
+      btn.disabled = false;
+    }
+  }
+
+  // Allow Enter key
+  document.addEventListener('keydown', e => { 
+    if (e.key === 'Enter') {
+      if (document.getElementById('login-step').style.display !== 'none') {
+        doLogin();
+      } else {
+        doVerify();
+      }
+    }
+  });
+
+  function showAlert(id, msg, type) {
+    const el = document.getElementById(id);
+    el.className = `alert alert-${type} show`;
+    el.innerHTML = msg;
+    setTimeout(() => el.classList.remove('show'), 3500);
+  }
+</script>
+</body>
+</html>

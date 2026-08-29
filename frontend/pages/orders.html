@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Orders — Street 160</title>
+  <link rel="stylesheet" href="../css/style.css"/>
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main class="main-content">
+  <div class="page-header">
+    <div>
+      <h2 class="page-title">Order Management</h2>
+      <p class="page-sub">Track and update all customer orders.</p>
+    </div>
+    <a href="new-order.html" class="btn btn-primary">+ New Order</a>
+  </div>
+
+  <div id="alert" class="alert"></div>
+
+  <!-- Filter tabs -->
+  <div class="filter-tabs" id="filter-tabs">
+    <button class="filter-tab active" onclick="setFilter('all',this)">All</button>
+    <button class="filter-tab" onclick="setFilter('pending',this)">Pending</button>
+    <button class="filter-tab" onclick="setFilter('preparing',this)">Preparing</button>
+    <button class="filter-tab" onclick="setFilter('ready',this)">Ready</button>
+    <button class="filter-tab" onclick="setFilter('completed',this)">Completed</button>
+    <button class="filter-tab" onclick="setFilter('cancelled',this)">Cancelled</button>
+  </div>
+
+  <!-- Table -->
+  <div class="card">
+    <div id="loading" class="loading"><div class="spinner"></div>Loading orders…</div>
+    <div class="table-wrap" id="table-wrap" style="display:none">
+      <table>
+        <thead><tr>
+          <th>Order #</th><th>Type</th><th>Items</th><th>Total</th><th>Time</th><th>Status</th><th class="no-print">Actions</th>
+        </tr></thead>
+        <tbody id="orders-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<!-- Order Details Modal -->
+<div class="modal-overlay" id="detail-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">Order Details</div>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<script src="../js/api.js"></script>
+<script src="../js/sidebar.js"></script>
+<script>
+  requireAuth();
+  renderSidebar('orders');
+
+  let orders = [];
+  let currentFilter = 'all';
+  const STATUS_NEXT = { pending: 'preparing', preparing: 'ready', ready: 'completed' };
+
+  async function loadOrders() {
+    try {
+      const res = await api.getOrders();
+      orders = (res.data || res).reverse();
+      renderTable();
+      setLoading('loading', false);
+      document.getElementById('table-wrap').style.display = 'block';
+    } catch(e) {
+      document.getElementById('loading').innerHTML = `<p style="color:var(--danger)">${e.message}</p>`;
+    }
+  }
+
+  function setFilter(f, btn) {
+    currentFilter = f;
+    document.querySelectorAll('.filter-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderTable();
+  }
+
+  function renderTable() {
+    const list = currentFilter === 'all' ? orders : orders.filter(o => o.status === currentFilter);
+    const tbody = document.getElementById('orders-tbody');
+    if (!list.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--muted)">No orders found</td></tr>';
+      return;
+    }
+    tbody.innerHTML = list.map(o => {
+      const itemCount = (o.order_items || o.items || []).reduce((s,i) => s + (i.quantity || i.qty || 0), 0);
+      const next = STATUS_NEXT[o.status];
+      return `
+        <tr>
+          <td style="color:var(--gold);font-weight:700">#${o.id}</td>
+          <td>${o.type === 'dine_in' ? '🍽 Table ' + o.table_number : '🥡 Takeaway'}</td>
+          <td style="color:var(--muted)">${itemCount} items</td>
+          <td style="font-weight:600">Rs. ${parseFloat(o.total).toLocaleString()}</td>
+          <td style="color:var(--muted);font-size:12px">${(o.created_at||'').slice(11,16)}</td>
+          <td>${statusBadge(o.status)}</td>
+          <td>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="btn btn-ghost btn-sm" onclick="viewOrder(${o.id})">View</button>
+              ${next ? `<button class="btn btn-success btn-sm" onclick="advanceStatus(${o.id},'${next}')">→ ${next}</button>` : ''}
+              ${(o.status==='pending'||o.status==='preparing') ? `<button class="btn btn-danger btn-sm" onclick="cancelOrder(${o.id})">Cancel</button>` : ''}
+              ${o.status==='completed' ? `<a href="billing.html?order_id=${o.id}" class="btn btn-ghost btn-sm">Bill</a>` : ''}
+            </div>
+          </td>
+        </tr>`;
+    }).join('');
+  }
+
+  async function advanceStatus(id, newStatus) {
+    try {
+      await api.updateStatus(id, newStatus);
+      showAlert('alert', `Order #${id} moved to ${newStatus}.`, 'success');
+      loadOrders();
+    } catch(e) { showAlert('alert', e.message, 'danger'); }
+  }
+
+  async function cancelOrder(id) {
+    if (!(await customConfirm(`Cancel order #${id}?`))) return;
+    try {
+      await api.cancelOrder(id);
+      showAlert('alert', `Order #${id} cancelled.`, 'success');
+      loadOrders();
+    } catch(e) { showAlert('alert', e.message, 'danger'); }
+  }
+
+  function viewOrder(id) {
+    const o = orders.find(x => x.id === id);
+    if (!o) return;
+    const items = o.order_items || o.items || [];
+    document.getElementById('modal-title').textContent = `Order #${o.id}`;
+    document.getElementById('modal-body').innerHTML = `
+      <div style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:8px">
+          <span style="color:var(--muted)">Type</span>
+          <span>${o.type === 'dine_in' ? 'Dine In — Table ' + o.table_number : 'Takeaway'}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:8px">
+          <span style="color:var(--muted)">Status</span>
+          ${statusBadge(o.status)}
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:13px">
+          <span style="color:var(--muted)">Time</span>
+          <span>${o.created_at || ''}</span>
+        </div>
+      </div>
+      <hr style="border-color:var(--border);margin:16px 0">
+      ${items.map(i => `
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:10px">
+          <span>${i.menu_item?.name || 'Item'} × ${i.quantity || i.qty}</span>
+          <span style="font-weight:600">Rs. ${(parseFloat(i.unit_price || i.price) * (i.quantity || i.qty)).toLocaleString()}</span>
+        </div>`).join('')}
+      <hr style="border-color:var(--border);margin:16px 0">
+      <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:700">
+        <span>Total</span><span style="color:var(--gold)">Rs. ${parseFloat(o.total).toLocaleString()}</span>
+      </div>
+      ${o.notes ? `<div style="margin-top:12px;padding:10px;background:var(--surface);border-radius:8px;font-size:12px;color:var(--muted)">📝 ${o.notes}</div>` : ''}
+    `;
+    document.getElementById('detail-modal').classList.add('show');
+  }
+
+  function closeModal() {
+    document.getElementById('detail-modal').classList.remove('show');
+  }
+
+  // Auto-refresh every 30s
+  loadOrders();
+  setInterval(loadOrders, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Menu Items — Street 160</title>
+  <link rel="stylesheet" href="../css/style.css"/>
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main class="main-content">
+  <div class="page-header">
+    <div>
+      <h2 class="page-title">Menu Items</h2>
+      <p class="page-sub">Add, edit and manage all food items.</p>
+    </div>
+    <button class="btn btn-primary" onclick="toggleForm()">+ Add Item</button>
+  </div>
+
+  <div id="alert" class="alert"></div>
+
+  <!-- Form -->
+  <div id="form-card" class="card highlight" style="margin-bottom:20px;display:none">
+    <div style="font-size:14px;font-weight:600;margin-bottom:16px" id="form-title">New Menu Item</div>
+    <div class="form-grid cols-3">
+      <div class="form-group">
+        <label class="form-label">Category *</label>
+        <select id="f-cat" class="form-select"></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Item Name *</label>
+        <input type="text" id="f-name" class="form-input" placeholder="e.g. Chicken Curry"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Price (Rs.) *</label>
+        <input type="number" id="f-price" class="form-input" placeholder="0.00" min="0" step="0.01"/>
+      </div>
+    </div>
+    <div class="form-grid cols-2">
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <input type="text" id="f-desc" class="form-input" placeholder="Short description (optional)"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Availability</label>
+        <select id="f-avail" class="form-select">
+          <option value="1">Available</option>
+          <option value="0">Unavailable</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-primary" onclick="saveItem()">Save Item</button>
+      <button class="btn btn-ghost" onclick="cancelForm()">Cancel</button>
+    </div>
+    <input type="hidden" id="f-id"/>
+  </div>
+
+  <!-- Filter tabs -->
+  <div class="filter-tabs" id="filter-tabs">
+    <button class="filter-tab active" data-cat="all" onclick="setFilter('all',this)">All</button>
+  </div>
+
+  <!-- Table -->
+  <div class="card">
+    <div id="loading" class="loading"><div class="spinner"></div>Loading menu…</div>
+    <div class="table-wrap" id="table-wrap" style="display:none">
+      <table>
+        <thead><tr>
+          <th>#</th><th>Name</th><th>Category</th><th>Price</th><th>Status</th><th class="no-print">Actions</th>
+        </tr></thead>
+        <tbody id="menu-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script src="../js/api.js"></script>
+<script src="../js/sidebar.js"></script>
+<script>
+  requireAuth();
+  renderSidebar('menu');
+
+  let menuItems  = [];
+  let categories = [];
+  let activeFilter = 'all';
+
+  async function loadAll() {
+    try {
+      const [mRes, cRes] = await Promise.all([api.getMenuItems(), api.getCategories()]);
+      menuItems  = mRes.data || mRes;
+      categories = cRes.data || cRes;
+
+      // Build category filter tabs
+      const tabs = document.getElementById('filter-tabs');
+      categories.forEach(c => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-tab';
+        btn.dataset.cat = c.id;
+        btn.textContent = c.name;
+        btn.onclick = () => setFilter(String(c.id), btn);
+        tabs.appendChild(btn);
+      });
+
+      // Populate category select in form
+      const sel = document.getElementById('f-cat');
+      sel.innerHTML = '<option value="">Select category</option>' +
+        categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+
+      renderTable();
+      setLoading('loading', false);
+      document.getElementById('table-wrap').style.display = 'block';
+    } catch(e) {
+      document.getElementById('loading').innerHTML = `<p style="color:var(--danger)">${e.message}</p>`;
+    }
+  }
+
+  function setFilter(cat, btn) {
+    activeFilter = cat;
+    document.querySelectorAll('.filter-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderTable();
+  }
+
+  function getCatName(id) {
+    return categories.find(c => c.id == id)?.name || '—';
+  }
+
+  function renderTable() {
+    const items = activeFilter === 'all' ? menuItems : menuItems.filter(m => String(m.category_id) === activeFilter);
+    const tbody = document.getElementById('menu-tbody');
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted)">No items found</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items.map(m => `
+      <tr>
+        <td style="color:var(--muted)">${m.id}</td>
+        <td style="font-weight:600">${m.name}</td>
+        <td><span class="badge badge-info">${getCatName(m.category_id)}</span></td>
+        <td style="color:var(--gold);font-weight:700">Rs. ${parseFloat(m.price).toLocaleString()}</td>
+        <td>${statusBadge(m.is_available ? 'available' : 'unavailable')}</td>
+        <td>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="editItem(${m.id})">Edit</button>
+            <button class="btn btn-ghost btn-sm" onclick="toggleAvail(${m.id},${m.is_available})">
+              ${m.is_available ? 'Disable' : 'Enable'}
+            </button>
+            <button class="btn btn-danger btn-sm" onclick="deleteItem(${m.id})">Delete</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  function toggleForm() {
+    cancelForm();
+    document.getElementById('form-card').style.display = 'block';
+  }
+
+  function cancelForm() {
+    document.getElementById('form-card').style.display = 'none';
+    document.getElementById('f-id').value = '';
+    document.getElementById('f-name').value = '';
+    document.getElementById('f-price').value = '';
+    document.getElementById('f-desc').value = '';
+    document.getElementById('f-cat').value = '';
+    document.getElementById('f-avail').value = '1';
+    document.getElementById('form-title').textContent = 'New Menu Item';
+  }
+
+  function editItem(id) {
+    const m = menuItems.find(x => x.id === id);
+    if (!m) return;
+    document.getElementById('f-id').value = m.id;
+    document.getElementById('f-name').value = m.name;
+    document.getElementById('f-price').value = m.price;
+    document.getElementById('f-desc').value = m.description || '';
+    document.getElementById('f-cat').value = m.category_id;
+    document.getElementById('f-avail').value = m.is_available ? '1' : '0';
+    document.getElementById('form-title').textContent = 'Edit Menu Item';
+    document.getElementById('form-card').style.display = 'block';
+    window.scrollTo(0, 0);
+  }
+
+  async function saveItem() {
+    const id    = document.getElementById('f-id').value;
+    const name  = document.getElementById('f-name').value.trim();
+    const price = document.getElementById('f-price').value;
+    const catId = document.getElementById('f-cat').value;
+    const desc  = document.getElementById('f-desc').value.trim();
+    const avail = document.getElementById('f-avail').value;
+
+    if (!name || !price || !catId) {
+      showAlert('alert', 'Name, price, and category are required.', 'danger');
+      return;
+    }
+    const payload = { name, price: parseFloat(price), category_id: parseInt(catId), description: desc, is_available: avail };
+    try {
+      if (id) { await api.updateItem(id, payload); showAlert('alert', 'Item updated.', 'success'); }
+      else    { await api.createItem(payload);      showAlert('alert', 'Item created.', 'success'); }
+      cancelForm();
+      loadAll();
+    } catch(e) { showAlert('alert', e.message, 'danger'); }
+  }
+
+  async function toggleAvail(id, current) {
+    try { await api.updateItem(id, { is_available: current ? 0 : 1 }); loadAll(); }
+    catch(e) { showAlert('alert', e.message, 'danger'); }
+  }
+
+  async function deleteItem(id) {
+    if (!(await customConfirm('Delete this menu item?'))) return;
+    try { await api.deleteItem(id); showAlert('alert', 'Item deleted.', 'success'); loadAll(); }
+    catch(e) { showAlert('alert', e.message, 'danger'); }
+  }
+
+  loadAll();
+</script>
+</body>
+</html>

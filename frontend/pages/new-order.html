@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>New Order — Street 160</title>
+  <link rel="stylesheet" href="../css/style.css"/>
+  <style>
+    .order-layout { display: grid; grid-template-columns: 1fr 360px; gap: 20px; }
+    .cart-sticky  { position: sticky; top: 20px; }
+    @media(max-width:900px){ .order-layout { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main class="main-content">
+  <div class="page-header">
+    <div>
+      <h2 class="page-title">New Order</h2>
+      <p class="page-sub">Select items and place a customer order.</p>
+    </div>
+  </div>
+
+  <div id="alert" class="alert"></div>
+  <div id="loading" class="loading"><div class="spinner"></div>Loading menu…</div>
+
+  <div id="content" style="display:none">
+    <div class="order-layout">
+
+      <!-- LEFT: Menu selection -->
+      <div>
+        <!-- Order type & table -->
+        <div class="card" style="margin-bottom:16px">
+          <div class="form-grid cols-2">
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label">Order Type</label>
+              <div style="display:flex;gap:8px">
+                <button class="btn btn-primary" id="btn-dine" onclick="setType('dine_in')">🍽 Dine In</button>
+                <button class="btn btn-ghost"   id="btn-take" onclick="setType('takeaway')">🥡 Takeaway</button>
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom:0" id="table-group">
+              <label class="form-label">Table Number</label>
+              <select id="table-no" class="form-input" style="max-width:150px">
+                <option value="">Select Table...</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Category tabs -->
+        <div class="filter-tabs" id="cat-tabs">
+          <button class="filter-tab active" onclick="setActiveCat('all',this)">All Items</button>
+        </div>
+
+        <!-- Menu grid -->
+        <div class="grid-cards" id="menu-grid"></div>
+      </div>
+
+      <!-- RIGHT: Cart -->
+      <div class="cart-sticky">
+        <div class="card">
+          <div style="font-size:15px;font-weight:700;font-family:'Playfair Display',serif;margin-bottom:16px">Order Summary</div>
+          <div id="cart-items">
+            <div class="empty-state" style="padding:32px 0">
+              <p>Click items to add them here</p>
+            </div>
+          </div>
+          <div id="cart-footer" style="display:none">
+            <div class="form-group">
+              <label class="form-label">Notes</label>
+              <textarea id="order-notes" class="form-textarea" rows="2" placeholder="Special requests…"></textarea>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:700;margin-bottom:16px">
+              <span>Total</span>
+              <span style="color:var(--gold)" id="cart-total">Rs. 0</span>
+            </div>
+            <button class="btn btn-primary" style="width:100%;padding:12px" onclick="placeOrder()">
+              Place Order →
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</main>
+
+<script src="../js/api.js"></script>
+<script src="../js/sidebar.js"></script>
+<script>
+  requireAuth();
+  renderSidebar('new-order');
+
+  let menuItems  = [];
+  let categories = [];
+  let cart       = [];
+  let orderType  = 'dine_in';
+  let activeCat  = 'all';
+
+  async function loadMenu() {
+    try {
+      const [mRes, cRes, tRes] = await Promise.all([api.getMenuItems(), api.getCategories(), api.getTables()]);
+      menuItems  = (mRes.data || mRes).filter(m => m.is_available);
+      categories = cRes.data || cRes;
+
+      const tabs = document.getElementById('cat-tabs');
+      categories.filter(c => c.is_active).forEach(c => {
+        const btn = document.createElement('button');
+        btn.className = 'filter-tab';
+        btn.textContent = c.name;
+        btn.onclick = () => setActiveCat(String(c.id), btn);
+        tabs.appendChild(btn);
+      });
+
+      // Populate tables
+      const tableSelect = document.getElementById('table-no');
+      const tables = tRes.data || tRes;
+      tables.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.table_number;
+        opt.textContent = 'Table ' + t.table_number;
+        if (t.status === 'occupied') {
+          opt.textContent += ' (Occupied)';
+          opt.disabled = true;
+        }
+        tableSelect.appendChild(opt);
+      });
+
+      renderGrid();
+      setLoading('loading', false);
+      document.getElementById('content').style.display = 'block';
+    } catch(e) {
+      document.getElementById('loading').innerHTML = `<p style="color:var(--danger)">${e.message}</p>`;
+    }
+  }
+
+  function getCatName(id) { return categories.find(c => c.id == id)?.name || ''; }
+
+  function setType(t) {
+    orderType = t;
+    document.getElementById('btn-dine').className = 'btn ' + (t === 'dine_in' ? 'btn-primary' : 'btn-ghost');
+    document.getElementById('btn-take').className = 'btn ' + (t === 'takeaway' ? 'btn-primary' : 'btn-ghost');
+    document.getElementById('table-group').style.display = t === 'dine_in' ? 'block' : 'none';
+  }
+
+  function setActiveCat(cat, btn) {
+    activeCat = cat;
+    document.querySelectorAll('#cat-tabs .filter-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderGrid();
+  }
+
+  function renderGrid() {
+    const items = activeCat === 'all' ? menuItems : menuItems.filter(m => String(m.category_id) === activeCat);
+    const grid = document.getElementById('menu-grid');
+    grid.innerHTML = items.map(item => {
+      const inCart = cart.find(c => c.menuId === item.id);
+      return `
+        <div class="menu-card ${inCart ? 'selected' : ''}" onclick="addToCart(${item.id})">
+          <div class="cat">${getCatName(item.category_id)}</div>
+          <div class="item">${item.name}</div>
+          <div class="price">Rs. ${parseFloat(item.price).toLocaleString()}</div>
+          ${inCart ? `<div class="in-cart">✓ In cart ×${inCart.qty}</div>` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  function addToCart(id) {
+    const item = menuItems.find(m => m.id === id);
+    if (!item) return;
+    const ex = cart.find(c => c.menuId === id);
+    if (ex) ex.qty++;
+    else cart.push({ menuId: id, name: item.name, price: parseFloat(item.price), qty: 1 });
+    renderCart();
+    renderGrid();
+  }
+
+  function changeQty(menuId, delta) {
+    const item = cart.find(c => c.menuId === menuId);
+    if (!item) return;
+    item.qty = Math.max(0, item.qty + delta);
+    cart = cart.filter(c => c.qty > 0);
+    renderCart();
+    renderGrid();
+  }
+
+  function renderCart() {
+    const footer = document.getElementById('cart-footer');
+    const itemsEl = document.getElementById('cart-items');
+    if (!cart.length) {
+      itemsEl.innerHTML = '<div class="empty-state" style="padding:32px 0"><p>Click items to add them here</p></div>';
+      footer.style.display = 'none';
+      return;
+    }
+    footer.style.display = 'block';
+    itemsEl.innerHTML = cart.map(item => `
+      <div class="cart-item">
+        <div>
+          <div style="font-size:13px;font-weight:600">${item.name}</div>
+          <div style="font-size:12px;color:var(--muted)">Rs. ${item.price} × ${item.qty}</div>
+        </div>
+        <div class="cart-qty-controls">
+          <button class="qty-btn" onclick="changeQty(${item.menuId},-1)">−</button>
+          <span style="font-size:13px;font-weight:600;min-width:20px;text-align:center">${item.qty}</span>
+          <button class="qty-btn" onclick="changeQty(${item.menuId},1)">+</button>
+        </div>
+      </div>
+    `).join('');
+    const subtotal = cart.reduce((s,i) => s + i.price * i.qty, 0);
+    document.getElementById('cart-total').textContent = 'Rs. ' + subtotal.toLocaleString();
+  }
+
+  async function placeOrder() {
+    if (!cart.length) { showAlert('alert', 'Add at least one item.', 'danger'); return; }
+    const tableNo = document.getElementById('table-no').value;
+    if (orderType === 'dine_in' && !tableNo) {
+      showAlert('alert', 'Please enter a table number.', 'danger');
+      return;
+    }
+    const payload = {
+      type:         orderType,
+      table_number: orderType === 'dine_in' ? parseInt(tableNo) : null,
+      notes:        document.getElementById('order-notes').value,
+      items: cart.map(i => ({ menu_item_id: i.menuId, quantity: i.qty, unit_price: i.price })),
+    };
+    try {
+      await api.createOrder(payload);
+      showAlert('alert', '✓ Order placed successfully!', 'success');
+      cart = [];
+      document.getElementById('order-notes').value = '';
+      document.getElementById('table-no').value = '';
+      renderCart();
+      renderGrid();
+    } catch(e) { showAlert('alert', e.message, 'danger'); }
+  }
+
+  loadMenu();
+</script>
+</body>
+</html>

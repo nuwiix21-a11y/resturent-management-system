@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Reports — Street 160</title>
+  <link rel="stylesheet" href="../css/style.css"/>
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main class="main-content">
+  <div class="page-header">
+    <div>
+      <h2 class="page-title">Sales Reports</h2>
+      <p class="page-sub">Overview of restaurant performance and sales data.</p>
+    </div>
+    <button class="btn btn-ghost" onclick="window.print()">🖨 Print Report</button>
+  </div>
+
+  <div id="loading" class="loading"><div class="spinner"></div>Loading report data…</div>
+
+  <div id="content" style="display:none">
+    <!-- Date filter -->
+    <div class="card no-print" style="margin-bottom:20px">
+      <div class="form-grid cols-3">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">From Date</label>
+          <input type="date" id="date-from" class="form-input" onchange="filterData()"/>
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">To Date</label>
+          <input type="date" id="date-to" class="form-input" onchange="filterData()"/>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:8px">
+          <button class="btn btn-primary" onclick="filterData()">Apply</button>
+          <button class="btn btn-ghost" onclick="clearFilter()">Clear</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row" id="stats-row"></div>
+
+    <!-- Charts + Table -->
+    <div class="grid-2">
+      <div class="card">
+        <div style="font-size:14px;font-weight:600;margin-bottom:20px">Top Selling Items</div>
+        <div id="top-items"></div>
+      </div>
+      <div class="card">
+        <div style="font-size:14px;font-weight:600;margin-bottom:20px">Order Breakdown</div>
+        <div id="order-breakdown"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:20px">
+      <div style="font-size:14px;font-weight:600;margin-bottom:16px">Order Summary Table</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>Order #</th><th>Type</th><th>Items</th><th>Total</th><th>Status</th><th>Date</th>
+          </tr></thead>
+          <tbody id="report-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="../js/api.js"></script>
+<script src="../js/sidebar.js"></script>
+<script>
+  requireAuth();
+  requireAdmin();
+  renderSidebar('reports');
+
+  let allOrders = [];
+  let menuItems = [];
+  let filtered  = [];
+
+  async function loadData() {
+    try {
+      const [ordRes, menuRes] = await Promise.all([api.getOrders(), api.getMenuItems()]);
+      allOrders = ordRes.data || ordRes;
+      menuItems = menuRes.data || menuRes;
+
+      // Default: today
+      const today = new Date().toISOString().slice(0,10);
+      document.getElementById('date-from').value = today;
+      document.getElementById('date-to').value   = today;
+
+      filterData();
+      setLoading('loading', false);
+      document.getElementById('content').style.display = 'block';
+    } catch(e) {
+      document.getElementById('loading').innerHTML = `<p style="color:var(--danger)">${e.message}</p>`;
+    }
+  }
+
+  function filterData() {
+    const from = document.getElementById('date-from').value;
+    const to   = document.getElementById('date-to').value;
+    filtered = allOrders.filter(o => {
+      const d = (o.created_at||'').slice(0,10);
+      return (!from || d >= from) && (!to || d <= to);
+    });
+    renderReport();
+  }
+
+  function clearFilter() {
+    document.getElementById('date-from').value = '';
+    document.getElementById('date-to').value   = '';
+    filtered = allOrders;
+    renderReport();
+  }
+
+  function getItemName(id) { return menuItems.find(m => m.id == id)?.name || 'Item'; }
+
+  function renderReport() {
+    const completed = filtered.filter(o => o.status === 'completed');
+    const revenue   = completed.reduce((s,o) => s + parseFloat(o.total), 0);
+    const avgOrder  = completed.length ? Math.round(revenue / completed.length) : 0;
+
+    // Item sales aggregation
+    const itemSales = {};
+    completed.forEach(o => {
+      const items = o.order_items || o.items || [];
+      items.forEach(i => {
+        const id = i.menu_item_id || i.menuId;
+        if (!itemSales[id]) itemSales[id] = { qty: 0, revenue: 0, name: i.menu_item?.name || getItemName(id) };
+        itemSales[id].qty     += (i.quantity || i.qty);
+        itemSales[id].revenue += parseFloat(i.unit_price || i.price) * (i.quantity || i.qty);
+      });
+    });
+    const topItems = Object.values(itemSales).sort((a,b) => b.qty - a.qty);
+    const totalQty = topItems.reduce((s,i) => s + i.qty, 0);
+    const maxQty   = topItems[0]?.qty || 1;
+
+    // Stats
+    document.getElementById('stats-row').innerHTML = `
+      <div class="stat-card"><div><div class="stat-label">Total Revenue</div><div class="stat-value">Rs. ${revenue.toLocaleString()}</div></div></div>
+      <div class="stat-card"><div><div class="stat-label">Completed Orders</div><div class="stat-value" style="color:var(--success)">${completed.length}</div></div></div>
+      <div class="stat-card"><div><div class="stat-label">Avg. Order Value</div><div class="stat-value" style="color:var(--info)">Rs. ${avgOrder.toLocaleString()}</div></div></div>
+      <div class="stat-card"><div><div class="stat-label">Items Sold</div><div class="stat-value" style="color:var(--warning)">${totalQty}</div></div></div>
+    `;
+
+    // Top items bar chart
+    document.getElementById('top-items').innerHTML = topItems.slice(0,8).map(item => `
+      <div style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">
+          <span>${item.name}</span>
+          <div style="display:flex;gap:16px">
+            <span style="color:var(--muted)">${item.qty} sold</span>
+            <span style="color:var(--gold);font-weight:600">Rs. ${item.revenue.toLocaleString()}</span>
+          </div>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" style="width:${(item.qty/maxQty)*100}%"></div>
+        </div>
+      </div>
+    `).join('') || '<p style="color:var(--muted);text-align:center">No data</p>';
+
+    // Order breakdown
+    const statuses = ['completed','preparing','pending','cancelled'];
+    const colors   = { completed:'var(--success)', preparing:'var(--warning)', pending:'var(--info)', cancelled:'var(--danger)' };
+    const total    = filtered.length || 1;
+    document.getElementById('order-breakdown').innerHTML = `
+      <div style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">
+          <span style="color:var(--muted)">Dine In</span>
+          <span style="font-weight:600">${filtered.filter(o=>o.type==='dine_in').length}</span>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${(filtered.filter(o=>o.type==='dine_in').length/total)*100}%;background:var(--info)"></div></div>
+      </div>
+      <div style="margin-bottom:24px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">
+          <span style="color:var(--muted)">Takeaway</span>
+          <span style="font-weight:600">${filtered.filter(o=>o.type==='takeaway').length}</span>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" style="width:${(filtered.filter(o=>o.type==='takeaway').length/total)*100}%;background:var(--warning)"></div></div>
+      </div>
+      ${statuses.map(s => {
+        const count = filtered.filter(o => o.status === s).length;
+        return `
+          <div style="margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+              <span style="text-transform:capitalize;color:var(--muted)">${s}</span>
+              <span style="color:${colors[s]};font-weight:600">${count}</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" style="width:${(count/total)*100}%;background:${colors[s]}"></div></div>
+          </div>`;
+      }).join('')}
+    `;
+
+    // Table
+    const tbody = document.getElementById('report-tbody');
+    if (!filtered.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted)">No data for selected period</td></tr>';
+      return;
+    }
+    tbody.innerHTML = [...filtered].reverse().map(o => {
+      const items = o.order_items || o.items || [];
+      return `<tr>
+        <td style="color:var(--gold);font-weight:600">#${o.id}</td>
+        <td>${o.type==='dine_in'?'Table '+o.table_number:'Takeaway'}</td>
+        <td style="color:var(--muted)">${items.reduce((s,i)=>s+(i.quantity||i.qty||0),0)}</td>
+        <td style="font-weight:600">Rs. ${parseFloat(o.total).toLocaleString()}</td>
+        <td>${statusBadge(o.status)}</td>
+        <td style="color:var(--muted);font-size:12px">${(o.created_at||'').slice(0,16)}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  loadData();
+</script>
+</body>
+</html>

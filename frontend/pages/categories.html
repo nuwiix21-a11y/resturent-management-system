@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Categories — Street 160</title>
+  <link rel="stylesheet" href="../css/style.css"/>
+</head>
+<body>
+<aside class="sidebar" id="sidebar"></aside>
+<main class="main-content">
+  <div class="page-header">
+    <div>
+      <h2 class="page-title">Categories</h2>
+      <p class="page-sub">Manage food categories for the menu.</p>
+    </div>
+    <button class="btn btn-primary" onclick="toggleForm()">+ Add Category</button>
+  </div>
+
+  <div id="alert" class="alert"></div>
+
+  <!-- Add / Edit Form -->
+  <div id="form-card" class="card highlight" style="margin-bottom:20px;display:none">
+    <div style="font-size:14px;font-weight:600;margin-bottom:16px" id="form-title">New Category</div>
+    <div class="form-grid cols-2">
+      <div class="form-group">
+        <label class="form-label">Category Name *</label>
+        <input type="text" id="f-name" class="form-input" placeholder="e.g. Rice & Curry"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <input type="text" id="f-desc" class="form-input" placeholder="Optional description"/>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Status</label>
+      <select id="f-active" class="form-select" style="max-width:200px">
+        <option value="1">Active</option>
+        <option value="0">Inactive</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-primary" onclick="saveCategory()">Save Category</button>
+      <button class="btn btn-ghost" onclick="cancelForm()">Cancel</button>
+    </div>
+    <input type="hidden" id="f-id"/>
+  </div>
+
+  <!-- Table -->
+  <div class="card">
+    <div id="loading" class="loading"><div class="spinner"></div>Loading categories…</div>
+    <div class="table-wrap" id="table-wrap" style="display:none">
+      <table>
+        <thead><tr>
+          <th>#</th><th>Name</th><th>Description</th><th>Status</th><th class="no-print">Actions</th>
+        </tr></thead>
+        <tbody id="cat-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script src="../js/api.js"></script>
+<script src="../js/sidebar.js"></script>
+<script>
+  requireAuth();
+  renderSidebar('categories');
+  let categories = [];
+
+  async function loadCategories() {
+    try {
+      const res = await api.getCategories();
+      categories = res.data || res;
+      renderTable();
+      setLoading('loading', false);
+      document.getElementById('table-wrap').style.display = 'block';
+    } catch(e) {
+      document.getElementById('loading').innerHTML = `<p style="color:var(--danger)">${e.message}</p>`;
+    }
+  }
+
+  function renderTable() {
+    const tbody = document.getElementById('cat-tbody');
+    if (!categories.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-state"><p>No categories found</p></td></tr>';
+      return;
+    }
+    tbody.innerHTML = categories.map(c => `
+      <tr>
+        <td style="color:var(--muted)">${c.id}</td>
+        <td style="font-weight:600;color:var(--gold)">${c.name}</td>
+        <td style="color:var(--muted)">${c.description || '—'}</td>
+        <td>${statusBadge(c.is_active ? 'active' : 'inactive')}</td>
+        <td>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="editCategory(${c.id})">Edit</button>
+            <button class="btn btn-ghost btn-sm" onclick="toggleActive(${c.id},${c.is_active})">
+              ${c.is_active ? 'Disable' : 'Enable'}
+            </button>
+            <button class="btn btn-danger btn-sm" onclick="deleteCategory(${c.id})">Delete</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  function toggleForm() {
+    cancelForm();
+    document.getElementById('form-card').style.display = 'block';
+  }
+
+  function cancelForm() {
+    document.getElementById('form-card').style.display = 'none';
+    document.getElementById('f-id').value = '';
+    document.getElementById('f-name').value = '';
+    document.getElementById('f-desc').value = '';
+    document.getElementById('f-active').value = '1';
+    document.getElementById('form-title').textContent = 'New Category';
+  }
+
+  function editCategory(id) {
+    const c = categories.find(x => x.id === id);
+    if (!c) return;
+    document.getElementById('f-id').value = c.id;
+    document.getElementById('f-name').value = c.name;
+    document.getElementById('f-desc').value = c.description || '';
+    document.getElementById('f-active').value = c.is_active ? '1' : '0';
+    document.getElementById('form-title').textContent = 'Edit Category';
+    document.getElementById('form-card').style.display = 'block';
+    document.getElementById('f-name').focus();
+  }
+
+  async function saveCategory() {
+    const id   = document.getElementById('f-id').value;
+    const name = document.getElementById('f-name').value.trim();
+    const desc = document.getElementById('f-desc').value.trim();
+    const active = document.getElementById('f-active').value;
+    if (!name) { showAlert('alert', 'Category name is required.', 'danger'); return; }
+
+    try {
+      if (id) {
+        await api.updateCategory(id, { name, description: desc, is_active: active });
+        showAlert('alert', 'Category updated successfully.', 'success');
+      } else {
+        await api.createCategory({ name, description: desc, is_active: active });
+        showAlert('alert', 'Category created successfully.', 'success');
+      }
+      cancelForm();
+      loadCategories();
+    } catch(e) {
+      showAlert('alert', e.message, 'danger');
+    }
+  }
+
+  async function toggleActive(id, current) {
+    try {
+      await api.updateCategory(id, { is_active: current ? 0 : 1 });
+      loadCategories();
+    } catch(e) { showAlert('alert', e.message, 'danger'); }
+  }
+
+  async function deleteCategory(id) {
+    if (!(await customConfirm('Delete this category? This may affect menu items.'))) return;
+    try {
+      await api.deleteCategory(id);
+      showAlert('alert', 'Category deleted.', 'success');
+      loadCategories();
+    } catch(e) { showAlert('alert', e.message, 'danger'); }
+  }
+
+  loadCategories();
+</script>
+</body>
+</html>
